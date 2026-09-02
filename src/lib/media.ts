@@ -485,18 +485,44 @@ async function removeIfExists(file: string): Promise<void> {
 }
 
 /**
- * Aus "Sign in to confirm you're not a bot" eine Meldung machen, die sagt, was
- * zu tun ist. Ohne diesen Umbau liest man den Rohtext und sucht am falschen
- * Ende - der Fehler liegt nicht am Video, sondern an der Server-IP.
+ * Aus "Sign in to confirm ..." eine Meldung machen, die sagt, was zu tun ist.
+ * Ohne diesen Umbau liest man den Rohtext und sucht am falschen Ende.
+ *
+ * Achtung: "Sign in to confirm" deckt ZWEI Faelle ab, die verschiedene Fixes
+ * brauchen - den Bot-Check auf der Server-IP (Cookies helfen) und ein
+ * altersbeschraenktes Video (Cookies helfen nur aus einem altersverifizierten
+ * Konto, ein frisches Wegwerf-Konto genuegt nicht). Beides in eine
+ * IP-Meldung zu verwandeln schickt einen genau dort suchen, wo nichts ist:
+ * ein altersbeschraenktes Video scheitert auch dann, wenn die IP sauber ist.
+ *
+ * Die Originalzeile von yt-dlp bleibt darum in jedem Fall angehaengt - sonst
+ * laesst sich hinterher nicht mehr feststellen, in welchem Fall man steckt.
  */
 function botHinweis(meldung: string, cookies: string | null): string {
-  if (cookies || !/not a bot|sign in to confirm|cookies/i.test(meldung)) {
-    return meldung;
+  const alter = /confirm your age|inappropriate for some users/i.test(meldung);
+  const bot = /not a bot/i.test(meldung) || /sign in to confirm/i.test(meldung);
+
+  if (alter) {
+    return (
+      "Dieses Video ist altersbeschraenkt, YouTube verlangt dafuer eine " +
+      "Anmeldung - unabhaengig von der Server-IP. Es braucht Cookies aus einem " +
+      "altersverifizierten Google-Konto; ein frisches Wegwerf-Konto reicht " +
+      `hier meist nicht. (${meldung})`
+    );
+  }
+  if (!bot) return meldung;
+
+  if (cookies) {
+    return (
+      "YouTube weist die hinterlegten Cookies zurueck - sie sind vermutlich " +
+      "abgelaufen. Neu exportieren und YTDLP_COOKIES_B64 ersetzen. " +
+      `(${meldung})`
+    );
   }
   return (
     "YouTube verlangt auf dieser Server-IP eine Anmeldung (Bot-Schutz). " +
     "Cookies hinterlegen: YTDLP_COOKIES_B64 (base64 einer cookies.txt) oder " +
-    "YTDLP_COOKIES_FILE, am besten mit einem Wegwerf-Google-Konto."
+    `YTDLP_COOKIES_FILE, am besten mit einem Wegwerf-Google-Konto. (${meldung})`
   );
 }
 
