@@ -20,26 +20,38 @@ ready you can **trim** it to just the part you want.
 
 These must be available to the Node process running the app:
 
-| Tool      | This machine                         | Notes                         |
-| --------- | ------------------------------------ | ----------------------------- |
-| `ffmpeg`  | `C:\ffmpeg\bin` (on PATH)            | audio conversion + trimming   |
-| `ffprobe` | `C:\ffmpeg\bin` (on PATH)            | reads clip durations          |
-| `yt-dlp`  | installed as a Python module (`pip`) | invoked as `python -m yt_dlp` |
+| Tool      | Purpose                     |
+| --------- | --------------------------- |
+| `ffmpeg`  | audio conversion + trimming |
+| `ffprobe` | reads clip durations        |
+| `yt-dlp`  | downloads the audio track   |
 
-Install / update `yt-dlp`:
+`yt-dlp` is located at runtime, so either install style works with no config:
+
+1. a standalone `yt-dlp` executable on the PATH — preferred, since it bundles its
+   own Python and can update itself with `yt-dlp -U`; otherwise
+2. the Python module form, using whichever of `python3` / `python` exists.
+
+Install / update it either way:
 
 ```bash
 pip install -U yt-dlp
 ```
 
+If neither is found, pads fail with a message that says so, rather than a bare
+`spawn python ENOENT`.
+
+> YouTube changes its player internals constantly, so a stale `yt-dlp` is by far
+> the most common cause of downloads breaking — update it first. yt-dlp also
+> wants a JavaScript runtime (e.g. `deno`) on the PATH; without one, extraction
+> is degraded and bot checks trip sooner.
+
 ### Overriding tool locations (optional)
 
-Set any of these env vars (e.g. in `.env.local`) if your setup differs from the
-defaults:
+Set any of these env vars (e.g. in `.env.local`) if lookup picks the wrong thing:
 
-- `YTDLP_BIN` — path to a standalone `yt-dlp` executable (used instead of the
-  `python -m yt_dlp` form).
-- `PYTHON_BIN` — python executable for the module form (default `python`).
+- `YTDLP_BIN` — path to a `yt-dlp` executable; skips lookup entirely.
+- `PYTHON_BIN` — python executable to use for the `-m yt_dlp` module form.
 - `FFMPEG_BIN` / `FFPROBE_BIN` — ffmpeg/ffprobe executables (default `ffmpeg` /
   `ffprobe`).
 - `FFMPEG_LOCATION` — directory containing ffmpeg, passed to yt-dlp if it can't

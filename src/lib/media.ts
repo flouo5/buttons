@@ -1,26 +1,83 @@
 import { spawn } from "node:child_process";
-import { promises as fs } from "node:fs";
+import { promises as fs, existsSync } from "node:fs";
 import path from "node:path";
 import { AUDIO_DIR, origAudioPath, workingAudioPath, ensureDirs } from "./paths";
 
 /**
- * Binary configuration. Defaults match this machine (ffmpeg on PATH, yt-dlp
- * installed as a python module). Override via env if your setup differs:
- *   YTDLP_BIN   - a standalone yt-dlp executable (used instead of `python -m yt_dlp`)
- *   PYTHON_BIN  - python executable when using the module form (default: "python")
+ * Binary configuration. Nothing is assumed about the host: yt-dlp is looked up
+ * at runtime (see `resolveYtdlp`) so the app works on a machine with a
+ * standalone `yt-dlp` and one where it's only a python module. Override via env:
+ *   YTDLP_BIN   - a standalone yt-dlp executable (skips lookup entirely)
+ *   PYTHON_BIN  - python executable for the `-m yt_dlp` module form
  *   FFMPEG_BIN  - ffmpeg executable (default: "ffmpeg")
  *   FFPROBE_BIN - ffprobe executable (default: "ffprobe")
  *   FFMPEG_LOCATION - directory containing ffmpeg, passed to yt-dlp
  */
 const YTDLP_BIN = process.env.YTDLP_BIN;
-const PYTHON_BIN = process.env.PYTHON_BIN || "python";
+const PYTHON_BIN = process.env.PYTHON_BIN;
 const FFMPEG_BIN = process.env.FFMPEG_BIN || "ffmpeg";
 const FFPROBE_BIN = process.env.FFPROBE_BIN || "ffprobe";
 const FFMPEG_LOCATION = process.env.FFMPEG_LOCATION || "";
 
+/**
+ * Find an executable the way a shell would. Bare `spawn("python")` fails with a
+ * bare "spawn python ENOENT" that says nothing about how to fix it, so resolve
+ * up front and report what was actually missing.
+ */
+function onPath(name: string): string | null {
+  if (name.includes("/") || name.includes(path.sep)) {
+    return existsSync(name) ? name : null;
+  }
+  const dirs = (process.env.PATH || "").split(path.delimiter).filter(Boolean);
+  const exts =
+    process.platform === "win32"
+      ? (process.env.PATHEXT || ".EXE;.CMD;.BAT").split(";").filter(Boolean)
+      : [""];
+  for (const dir of dirs) {
+    for (const ext of exts) {
+      const candidate = path.join(dir, name + ext);
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  return null;
+}
+
+/** Cached only on success — a missing tool may be installed while we run. */
+let resolvedYtdlp: { cmd: string; prefix: string[] } | null = null;
+
+function resolveYtdlp(): { cmd: string; prefix: string[] } {
+  if (resolvedYtdlp) return resolvedYtdlp;
+
+  if (YTDLP_BIN) {
+    resolvedYtdlp = { cmd: YTDLP_BIN, prefix: [] };
+    return resolvedYtdlp;
+  }
+
+  // Prefer a standalone yt-dlp: it ships its own Python and self-updates.
+  const standalone = onPath("yt-dlp");
+  if (standalone) {
+    resolvedYtdlp = { cmd: standalone, prefix: [] };
+    return resolvedYtdlp;
+  }
+
+  // Otherwise the module form, with whichever python this host actually has.
+  for (const name of PYTHON_BIN ? [PYTHON_BIN] : ["python3", "python"]) {
+    const python = onPath(name);
+    if (python) {
+      resolvedYtdlp = { cmd: python, prefix: ["-m", "yt_dlp"] };
+      return resolvedYtdlp;
+    }
+  }
+
+  throw new Error(
+    "yt-dlp was not found. Install it (`pip install -U yt-dlp`, or download the " +
+      "standalone build onto your PATH) or point YTDLP_BIN at the executable.",
+  );
+}
+
 function ytdlpCommand(args: string[]): { cmd: string; args: string[] } {
-  if (YTDLP_BIN) return { cmd: YTDLP_BIN, args };
-  return { cmd: PYTHON_BIN, args: ["-m", "yt_dlp", ...args] };
+  const { cmd, prefix } = resolveYtdlp();
+  return { cmd, args: [...prefix, ...args] };
 }
 
 interface RunResult {
