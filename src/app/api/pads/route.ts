@@ -9,8 +9,23 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const pads = await listPads();
-  return NextResponse.json({ pads });
+  try {
+    const pads = await listPads();
+    return NextResponse.json({ pads });
+  } catch (err) {
+    return NextResponse.json({ error: fehlerText(err) }, { status: 500 });
+  }
+}
+
+/**
+ * Den echten Grund mitschicken. Ein nackter 500 wird im Client zu
+ * "Request failed (500)" - damit laesst sich ein Rechteproblem auf dem
+ * Datenvolume nicht von einem Codefehler unterscheiden.
+ */
+function fehlerText(err: unknown): string {
+  const text = err instanceof Error ? err.message : String(err);
+  console.error("[api/pads]", err);
+  return text || "Unbekannter Serverfehler.";
 }
 
 export async function POST(request: NextRequest) {
@@ -53,7 +68,11 @@ export async function POST(request: NextRequest) {
     updatedAt: now,
   };
 
-  await addPad(pad);
+  try {
+    await addPad(pad);
+  } catch (err) {
+    return NextResponse.json({ error: fehlerText(err) }, { status: 500 });
+  }
   startDownloadJob(pad.id, youtubeUrl);
 
   return NextResponse.json({ pad }, { status: 201 });
