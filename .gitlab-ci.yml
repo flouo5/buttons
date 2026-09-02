@@ -1,0 +1,47 @@
+# Build -> registry.4zu5.at -> Coolify-Deploy auf HETZNER 1.
+# Gebaut wird auf pop-os, damit HETZNER 1 nur noch ausliefert. Ablauf und
+# Fallstricke: ~/Documents/GITHUB-GITLAB-TRANSFER-PLAN.md
+stages: [build, deploy]
+
+variables:
+  IMAGE: $CI_REGISTRY_IMAGE
+  TAG: $CI_COMMIT_SHORT_SHA
+
+build:
+  stage: build
+  image: docker:27
+  script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    # Layer-Cache aus dem letzten Build ziehen. Ohne das wandert bei jedem
+    # Deploy die volle Image-Groesse ueber die Heim-Upload-Leitung.
+    - docker pull "$IMAGE:latest" || true
+    - docker build --cache-from "$IMAGE:latest" -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
+    - docker push "$IMAGE:$TAG"
+    - docker push "$IMAGE:latest"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+deploy:
+  stage: deploy
+  image: curlimages/curl:latest
+  script:
+    # Fehlende Variablen sonst als "curl: (3) URL rejected: No host part in
+    # the URL" -- daran ist nicht zu erkennen, dass die CI/CD-Variablen fehlen.
+    # Sie haengen am PROJEKT, ein neues Projekt hat sie also nicht.
+    - |
+      missing=""
+      for v in COOLIFY_URL COOLIFY_TOKEN COOLIFY_APP_UUID; do
+        eval "value=\$$v"
+        [ -z "$value" ] && missing="$missing $v"
+      done
+      if [ -n "$missing" ]; then
+        echo "Fehlende CI/CD-Variablen:$missing"
+        echo "Setzen unter Settings -> CI/CD -> Variables am PROJEKT."
+        exit 1
+      fi
+    - |
+      curl --fail --show-error --silent \
+        "$COOLIFY_URL/api/v1/deploy?uuid=$COOLIFY_APP_UUID&force=false" \
+        -H "Authorization: Bearer $COOLIFY_TOKEN"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
