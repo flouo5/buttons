@@ -31,24 +31,38 @@ ENV NODE_ENV=production \
     HOSTNAME=0.0.0.0 \
     TZ=Europe/Vienna
 
-# yt-dlp als Standalone, nicht als pip-Modul: es bringt sein eigenes Python
-# mit, und src/lib/media.ts sucht genau danach zuerst (resolveYtdlp).
-# Die Version ist gepinnt, damit ein Rebuild reproduzierbar bleibt.
+# Drei Dinge, ohne die ein YouTube-Downloader auf einer Datacenter-IP nicht
+# lange lebt. Erfahrungen aus VAULT, ausfuehrlich in
+# ~/Documents/GITHUB-GITLAB-TRANSFER-PLAN.md.
 #
-# ACHTUNG, Betriebshinweis: YouTube aendert seine Auslieferung regelmaessig,
-# und dann hilft nur ein neueres yt-dlp. Ein gepinntes yt-dlp hoert also
-# irgendwann auf zu funktionieren, ohne dass sich am Code etwas aendert.
-# Dann diese Zeile hochziehen und neu bauen.
-ARG YTDLP_VERSION=2025.08.27
-
+# 1. yt-dlp als Standalone-Build (bringt sein eigenes Python mit). Bewusst
+#    `latest` und NICHT gepinnt: das Image ist nur der Startwert, zur Laufzeit
+#    haelt sich eine schreibbare Kopie auf dem Volume selbst aktuell
+#    (src/lib/media.ts, selbstaktuellesYtdlp). YouTube aendert seine
+#    Player-Interna im Wochentakt; ein eingebranntes yt-dlp waere nach ein
+#    paar Wochen tot und man muesste nur deswegen neu deployen.
+#
+# 2. deno als JavaScript-Runtime. yt-dlp fuehrt inzwischen YouTubes
+#    Player-Code aus (EJS). Ohne JS-Runtime laeuft ein degradierter Fallback,
+#    der schneller im Bot-Check landet und als deprecated gilt. yt-dlp findet
+#    deno selbst auf dem PATH, es braucht keine Konfiguration.
+#
+# 3. ffmpeg/ffprobe zum Extrahieren und Schneiden.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ffmpeg ca-certificates curl tzdata \
+ && apt-get install -y --no-install-recommends \
+      ffmpeg ca-certificates curl unzip tzdata \
  && curl -fsSL -o /usr/local/bin/yt-dlp \
-      "https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/yt-dlp_linux" \
- && chmod 755 /usr/local/bin/yt-dlp \
- && apt-get purge -y curl && apt-get autoremove -y \
+      "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux" \
+ && chmod 0755 /usr/local/bin/yt-dlp \
+ && curl -fsSL -o /tmp/deno.zip \
+      "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip" \
+ && unzip -o /tmp/deno.zip -d /usr/local/bin \
+ && rm /tmp/deno.zip \
+ && chmod 0755 /usr/local/bin/deno \
+ && apt-get purge -y curl unzip && apt-get autoremove -y \
  && rm -rf /var/lib/apt/lists/* \
  && /usr/local/bin/yt-dlp --version \
+ && /usr/local/bin/deno --version | head -1 \
  && ffmpeg -version | head -1 \
  && ffprobe -version | head -1
 
@@ -65,7 +79,8 @@ COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 # WICHTIG: /app/data MUSS ein persistentes Volume sein. Ohne Volume sind nach
 # jedem Deploy alle Pads weg - und die Audios muessten neu heruntergeladen
 # werden, was bei geloeschten YouTube-Videos gar nicht mehr geht.
-RUN mkdir -p /app/data/audio /app/data/icons && chown -R nextjs:nodejs /app/data
+RUN mkdir -p /app/data/audio /app/data/icons /app/data/bin \
+ && chown -R nextjs:nodejs /app/data
 VOLUME ["/app/data"]
 
 USER nextjs
