@@ -53,17 +53,40 @@ const FFMPEG_LOCATION = process.env.FFMPEG_LOCATION || "";
  */
 let cookiesPath: string | null | undefined;
 
+/**
+ * Warum keine Cookies aktiv sind, OBWOHL welche konfiguriert wurden.
+ *
+ * Das ist der Unterschied, der beim Debuggen zaehlt: "nichts hinterlegt" und
+ * "hinterlegt, aber unbenutzbar" sahen beide gleich aus - die Meldung riet in
+ * beiden Faellen, Cookies zu hinterlegen, und man setzt dann zum zweiten Mal
+ * etwas, was schon dasteht. Ein falscher Pfad in YTDLP_COOKIES_FILE fiel ganz
+ * ohne Log durch, und ein fehlgeschlagener Schreibzugriff (Volume gehoert root,
+ * die App laeuft als uid 1001) landete nur in stderr.
+ */
+let cookiesProblem: string | null = null;
+
 async function resolveCookies(): Promise<string | null> {
   if (cookiesPath !== undefined) return cookiesPath;
 
+  const probleme: string[] = [];
+
   const fileEnv = process.env.YTDLP_COOKIES_FILE || "";
-  if (fileEnv && existsSync(fileEnv)) {
-    cookiesPath = fileEnv;
-    return cookiesPath;
+  if (fileEnv) {
+    if (existsSync(fileEnv)) {
+      cookiesProblem = null;
+      cookiesPath = fileEnv;
+      return cookiesPath;
+    }
+    probleme.push(
+      `YTDLP_COOKIES_FILE zeigt auf "${fileEnv}", dort liegt keine Datei`,
+    );
   }
 
   const b64 = process.env.YTDLP_COOKIES_B64 || "";
-  if (!b64) {
+  if (!b64.trim()) {
+    if (b64) probleme.push("YTDLP_COOKIES_B64 enthaelt nur Leerzeichen");
+    cookiesProblem = probleme.join("; ") || null;
+    if (cookiesProblem) console.error("[media] Cookies unbrauchbar:", cookiesProblem);
     cookiesPath = null;
     return cookiesPath;
   }
@@ -71,6 +94,9 @@ async function resolveCookies(): Promise<string | null> {
   try {
     const ziel = path.join(DATA_DIR, "cookies.txt");
     const hashDatei = path.join(DATA_DIR, ".cookies-quelle");
+    // Gehasht wird der Rohwert, nicht der getrimmte: sonst wuerde ein einziges
+    // Leerzeichen im Env die Datei neu schreiben und die von yt-dlp
+    // nachgefuehrten Cookies wegwerfen.
     const hash = createHash("sha256").update(b64).digest("hex");
 
     let schreiben = true;
@@ -83,9 +109,16 @@ async function resolveCookies(): Promise<string | null> {
       await fs.writeFile(hashDatei, hash, { mode: 0o600 });
       console.log("[media] cookies.txt aus YTDLP_COOKIES_B64 geschrieben");
     }
+    cookiesProblem = null;
     cookiesPath = ziel;
   } catch (e) {
-    console.error("[media] cookies setup failed:", e);
+    probleme.push(
+      `cookies.txt liess sich nicht anlegen: ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    );
+    cookiesProblem = probleme.join("; ");
+    console.error("[media] Cookies unbrauchbar:", cookiesProblem);
     cookiesPath = null;
   }
   return cookiesPath;
@@ -532,6 +565,15 @@ function botHinweis(meldung: string, cookies: string | null): string {
       "YouTube weist die hinterlegten Cookies zurueck - sie sind vermutlich " +
       "abgelaufen. Neu exportieren und YTDLP_COOKIES_B64 ersetzen. " +
       `(${meldung})`
+    );
+  }
+  // Konfiguriert, aber nicht benutzbar: sonst raet die Meldung zu etwas, was
+  // schon gesetzt ist, und man sucht den Fehler bei YouTube statt beim Mount.
+  if (cookiesProblem) {
+    return (
+      "Es sind Cookies konfiguriert, aber sie konnten nicht benutzt werden: " +
+      `${cookiesProblem}. Bis das behoben ist, laeuft der Download ohne ` +
+      `Anmeldung - und YouTube verlangt auf dieser Server-IP eine. (${meldung})`
     );
   }
   return (
