@@ -315,9 +315,24 @@ function playerClientArgs(nutzen: boolean): string[] {
     : [];
 }
 
-/** Genau der Fehler, bei dem ein erzwungener player_client schuld sein kann. */
-function nachReloadFehler(stderr: string): boolean {
-  return /page needs to be reloaded/i.test(stderr);
+/**
+ * Fehler, bei denen ein erzwungener player_client schuld sein kann.
+ *
+ * Nicht nur "page needs to be reloaded": ein Client kann auch schlicht keine
+ * passenden Formate liefern. Gemessen an ma7awXLVpH0 mit `-f ba/b`, wie die App
+ * es aufruft - `tv` gibt "page needs to be reloaded", `web_safari` gibt
+ * "Requested format is not available", `mweb` und der Standard liefern beide.
+ * Faengt man nur den ersten Fall, laeuft der Wiederholversuch bei web_safari
+ * nicht an und der Download scheitert mit einer Meldung, die aufs Format zeigt
+ * statt auf den Schalter, der es verursacht hat.
+ */
+function clientVerdacht(stderr: string): boolean {
+  return (
+    /page needs to be reloaded/i.test(stderr) ||
+    /requested format is not available/i.test(stderr) ||
+    /no video formats found/i.test(stderr) ||
+    /only images are available/i.test(stderr)
+  );
 }
 
 /** Best-effort fetch of the video title without downloading. */
@@ -343,7 +358,7 @@ export async function fetchTitle(url: string): Promise<string | null> {
         if (title) return title;
         return null;
       }
-      if (!(mitClient && PLAYER_CLIENT && nachReloadFehler(stderr))) return null;
+      if (!(mitClient && PLAYER_CLIENT && clientVerdacht(stderr))) return null;
     } catch {
       return null;
     }
@@ -394,7 +409,7 @@ export async function downloadAudio(id: string, url: string): Promise<void> {
     letzterFehler = timedOut
       ? "yt-dlp wurde nach Zeitüberschreitung abgebrochen."
       : botHinweis(cleanupError(stderr), await resolveCookies());
-    if (!(mitClient && PLAYER_CLIENT && nachReloadFehler(stderr))) break;
+    if (!(mitClient && PLAYER_CLIENT && clientVerdacht(stderr))) break;
   }
   if (!erfolg) {
     throw new Error(letzterFehler || "yt-dlp failed to download audio.");
