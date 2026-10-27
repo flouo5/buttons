@@ -40,7 +40,7 @@ deploy:
         exit 1
       fi
     - |
-      curl --fail --show-error --silent \
+      curl -X POST --fail --show-error --silent \
         "$COOLIFY_URL/api/v1/deploy?uuid=$COOLIFY_APP_UUID&force=false" \
         -H "Authorization: Bearer $COOLIFY_TOKEN"
   rules:
