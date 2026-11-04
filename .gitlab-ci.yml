@@ -40,8 +40,49 @@ deploy:
         exit 1
       fi
     - |
-      curl -X POST --fail --show-error --silent \
+      ANTWORT=$(curl -X POST --fail --show-error --silent \
         "$COOLIFY_URL/api/v1/deploy?uuid=$COOLIFY_APP_UUID&force=false" \
-        -H "Authorization: Bearer $COOLIFY_TOKEN"
+        -H "Authorization: Bearer $COOLIFY_TOKEN")
+      echo "$ANTWORT"
+      # Deploy-Meldung (04.11.2026, siehe 4zu5/vault docs/deploy-notify.md): nur mit
+      # der notify-Marke in der Commit-Nachricht auf Coolify warten und dem Vault melden.
+      case "$CI_COMMIT_MESSAGE" in *"[notify]"*) ;; *) exit 0 ;; esac
+      DEP=$(echo "$ANTWORT" | grep -o '"deployment_uuid":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+      STATUS=timeout
+      if [ -n "$DEP" ]; then
+        for i in $(seq 1 80); do
+          sleep 15
+          S=$(curl --silent "$COOLIFY_URL/api/v1/deployments/$DEP" -H "Authorization: Bearer $COOLIFY_TOKEN" \
+            | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+          echo "Coolify: ${S:-?}"
+          case "$S" in
+            finished) STATUS=success; break ;;
+            failed|cancelled*) STATUS=$S; break ;;
+          esac
+        done
+      fi
+      curl --silent --show-error -X POST "$VAULT_URL/api/deploy-hook" \
+        -H "Authorization: Bearer $DEPLOY_HOOK_SECRET" \
+        --data-urlencode "repo=$CI_PROJECT_PATH" --data-urlencode "status=$STATUS" \
+        --data-urlencode "message=$CI_COMMIT_MESSAGE" --data-urlencode "sha=$CI_COMMIT_SHA" \
+        --data-urlencode "ref=$CI_COMMIT_REF_NAME" --data-urlencode "pipeline=$CI_PIPELINE_URL" \
+        --data-urlencode "url=${APP_URL:-}" || echo "Meldung an den Vault fehlgeschlagen"
+      [ "$STATUS" = success ]
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
+
+# Scheitert schon der Build, laeuft der Deploy-Job nicht — dann meldet dieser
+# (nur mit der notify-Marke; siehe 4zu5/vault docs/deploy-notify.md).
+deploy-meldung-fehler:
+  stage: deploy
+  image: curlimages/curl:latest
+  script:
+    - |
+      curl --silent --show-error -X POST "$VAULT_URL/api/deploy-hook" \
+        -H "Authorization: Bearer $DEPLOY_HOOK_SECRET" \
+        --data-urlencode "repo=$CI_PROJECT_PATH" --data-urlencode "status=failed" \
+        --data-urlencode "message=$CI_COMMIT_MESSAGE" --data-urlencode "sha=$CI_COMMIT_SHA" \
+        --data-urlencode "ref=$CI_COMMIT_REF_NAME" --data-urlencode "pipeline=$CI_PIPELINE_URL" || true
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_COMMIT_MESSAGE =~ /\[notify\]/'
+      when: on_failure
