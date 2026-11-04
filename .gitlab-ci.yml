@@ -53,7 +53,7 @@ deploy:
         for i in $(seq 1 80); do
           sleep 15
           S=$(curl --silent "$COOLIFY_URL/api/v1/deployments/$DEP" -H "Authorization: Bearer $COOLIFY_TOKEN" \
-            | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+            | grep -oE '"status":"(queued|in_progress|finished|failed|cancelled-by-user)"' | head -1 | cut -d'"' -f4 || true)
           echo "Coolify: ${S:-?}"
           case "$S" in
             finished) STATUS=success; break ;;
